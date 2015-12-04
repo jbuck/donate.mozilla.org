@@ -26,6 +26,7 @@ async.eachSeries(charges, (id, done) => {
       }
 
       console.info(`queued charge ${charge.id} - message id: ${data.MessageId}`);
+      done();
     });
   }).catch((charge_error) => {
     throw charge_error;
