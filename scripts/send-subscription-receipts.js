@@ -2,72 +2,32 @@
 
 require('habitat').load();
 
-var stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-var hatchet = require('hatchet');
 var async = require('async');
-var moment = require('moment');
+var hatchet = require('hatchet');
+var Stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 
-var stripe_charge_list_opts = {
-  created: {
-    lte: moment.unix(new Date(process.env.BEFORE_DATE)).valueOf()
-  },
-  limit: 100,
-  expand: ['data.customer']
-};
+var charges = require('./charges');
 
-var charges;
-
-function process_charge_data(charge, done) {
-  if (!charge.invoice || !charge.paid || charge.refunded) {
-    return done();
-  }
-
-  console.info(`Sending receipt for charge ${charge.id}`);
-
-  // jlolbuck
-  charge.customer_object = charge.customer;
-
-  hatchet.send('stripe_charge_succeeded', charge, function(err, data) {
-    if (err) {
-      console.error(`failed to queue data for charge ${charge.id}`, err);
+async.eachSeries(charges, (id, done) => {
+  Stripe.charges.retrieve(id, {
+    expand: ['customer']
+  }).then((charge) => {
+    if (!charge.invoice || !charge.paid || charge.refunded) {
+      return done();
     }
 
-    console.info(`queued charge data - message id: ${data.MessageId}`);
-    done();
-  });
-}
+    charge.customer_object = charge.customer;
 
-
-async.doWhilst(function(done) {
-  stripe.charges.list(
-    stripe_charge_list_opts,
-    function(err, resp) {
+    hatchet.send('stripe_charge_succeeded', charge, function(err, data) {
       if (err) {
-        return done(err);
+        console.error(`failed to queue data for charge ${charge.id}`, err);
+        done(err);
+        return;
       }
-      charges = resp;
-      async.eachSeries(
-        charges.data,
-        process_charge_data,
-        done
-      );
-    }
-  );
-}, function() {
-  if (charges.has_more) {
-    console.info('Fetching next page of charges...');
-    stripe_charge_list_opts = {
-      starting_after: charges.data[charges.data.length - 1].id,
-      limit: 100,
-      expand: ['data.customer']
-    }
-  }
-  return charges.has_more;
-}, function(err) {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.info('Done!');
-  process.exit(0);
+
+      console.info(`queued charge ${charge.id} - message id: ${data.MessageId}`);
+    });
+  }).catch((charge_error) => {
+    throw charge_error;
+  });
 });
